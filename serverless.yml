@@ -1,5 +1,5 @@
-# CHANGE-TO-YOURNAME-aws-node-http-api-project
-service: aws-node-http-api-project
+# CHANGE-TO-YOURNAME-animated-train
+service: animated-train
 frameworkVersion: '3'
 
 provider:
