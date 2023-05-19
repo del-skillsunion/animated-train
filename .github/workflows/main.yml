@@ -22,6 +22,15 @@ jobs:
       - name: Run Installation of Dependencies Commands
         run: npm install
 
+  scan-dependencies:
+    runs-on: ubuntu-latest
+    needs: install-dependencies
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v3
+      - name: Run Scanning of Dependencies Commands
+        run: npm audit
+
   deploy:
     name: deploy
     runs-on: ubuntu-latest
