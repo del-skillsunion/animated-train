@@ -15,5 +15,12 @@ functions:
           path: /
           method: get
 
+  error:
+    handler: index.error
+    events:
+      - httpApi:
+          path: /error
+          method: get
+
 plugins:
   - serverless-offline
