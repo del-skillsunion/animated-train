@@ -1,4 +1,3 @@
-# animated-train
+# Animated Train
 
-Update
-asdkajsndasd
+This is Animated Train repo
