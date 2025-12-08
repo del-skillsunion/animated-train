@@ -1,0 +1,31 @@
+changelog:
+  categories:
+    - title: "Features"
+      labels:
+        - feat
+        - feature
+    - title: "Bug Fixes"
+      labels:
+        - fix
+        - bug
+    - title: "Maintenance"
+      labels:
+        - chore
+        - docs
+        - refactor
+        - style
+    - title: "Tests"
+      labels:
+        - test
+    - title: "Infrastructure / CI"
+      labels:
+        - infra
+        - build
+        - ci
+    - title: "Breaking Changes"
+      labels:
+        - breaking-change
+
+  exclude:
+    labels:
+      - skip-release
