@@ -3,44 +3,51 @@
 # ===========================
 
 "scope: backend":
-  - "src/**"
-  - "app/**"
-  - "services/**"
+  - changed-files:
+      - any-glob-to-any-file: "src/**"
+      - any-glob-to-any-file: "app/**"
+      - any-glob-to-any-file: "services/**"
 
 "scope: infra":
-  - "infra/**"
-  - "terraform/**"
-  - ".github/workflows/**"
+  - changed-files:
+      - any-glob-to-any-file: "infra/**"
+      - any-glob-to-any-file: "terraform/**"
+      - any-glob-to-any-file: ".github/workflows/**"
 
 "scope: docs":
-  - "docs/**"
-  - "README.md"
-  - ".github/pull_request_template.md"
+  - changed-files:
+      - any-glob-to-any-file: "docs/**"
+      - any-glob-to-any-file: "README.md"
+      - any-glob-to-any-file: ".github/pull_request_template.md"
 
 
 # ===========================
-# Type labels (only when clear)
+# Type-ish labels inferred from files
+# (still recommend humans set main type: feat/fix/…)
 # ===========================
 
 docs:
-  - "docs/**"
-  - "README.md"
-  - "CHANGELOG.md"
+  - changed-files:
+      - any-glob-to-any-file: "docs/**"
+      - any-glob-to-any-file: "README.md"
 
 test:
-  - "tests/**"
-  - "test/**"
-  - "**/*.test.*"
-  - "**/*.spec.*"
+  - changed-files:
+      - any-glob-to-any-file: "tests/**"
+      - any-glob-to-any-file: "test/**"
+      - any-glob-to-any-file: "**/*.test.*"
+      - any-glob-to-any-file: "**/*.spec.*"
 
 build:
-  - ".github/workflows/**"
-  - "Makefile"
-  - "package.json"
-  - "pnpm-lock.yaml"
-  - "yarn.lock"
+  - changed-files:
+      - any-glob-to-any-file: ".github/workflows/**"
+      - any-glob-to-any-file: "Makefile"
+      - any-glob-to-any-file: "package.json"
+      - any-glob-to-any-file: "pnpm-lock.yaml"
+      - any-glob-to-any-file: "yarn.lock"
 
 infra:
-  - "infra/**"
-  - "terraform/**"
-  - "deploy/**"
+  - changed-files:
+      - any-glob-to-any-file: "infra/**"
+      - any-glob-to-any-file: "terraform/**"
+      - any-glob-to-any-file: "deploy/**"
