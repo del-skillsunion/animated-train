@@ -1,0 +1,23 @@
+{
+  "name": "animated-train",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest --forceExit"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.20.0",
+    "jest": "^29.5.0",
+    "serverless": "^4.9.0"
+    "express": "^4.22.0",
+    "jest": "^30.0.0",
+    "serverless": "^4.0.0"
+  },
+  "devDependencies": {
+    "serverless-offline": "^14.4.0",
+    "supertest": "^6.3.3"
+  }
+}

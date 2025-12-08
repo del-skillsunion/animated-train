@@ -1,0 +1,46 @@
+# ===========================
+# Scope labels
+# ===========================
+
+"scope: backend":
+  - "src/**"
+  - "app/**"
+  - "services/**"
+
+"scope: infra":
+  - "infra/**"
+  - "terraform/**"
+  - ".github/workflows/**"
+
+"scope: docs":
+  - "docs/**"
+  - "README.md"
+  - ".github/pull_request_template.md"
+
+
+# ===========================
+# Type labels (only when clear)
+# ===========================
+
+docs:
+  - "docs/**"
+  - "README.md"
+  - "CHANGELOG.md"
+
+test:
+  - "tests/**"
+  - "test/**"
+  - "**/*.test.*"
+  - "**/*.spec.*"
+
+build:
+  - ".github/workflows/**"
+  - "Makefile"
+  - "package.json"
+  - "pnpm-lock.yaml"
+  - "yarn.lock"
+
+infra:
+  - "infra/**"
+  - "terraform/**"
+  - "deploy/**"
