@@ -8,6 +8,13 @@
       - any-glob-to-any-file: "app/**"
       - any-glob-to-any-file: "services/**"
 
+"scope: frontend":
+  - changed-files:
+      - any-glob-to-any-file: "src/**"
+      - any-glob-to-any-file: "components/**"
+      - any-glob-to-any-file: "pages/**"
+      - any-glob-to-any-file: "app/**"
+
 "scope: infra":
   - changed-files:
       - any-glob-to-any-file: "infra/**"
@@ -19,12 +26,6 @@
       - any-glob-to-any-file: "docs/**"
       - any-glob-to-any-file: "README.md"
       - any-glob-to-any-file: ".github/pull_request_template.md"
-
-
-# ===========================
-# Type-ish labels inferred from files
-# (still recommend humans set main type: feat/fix/…)
-# ===========================
 
 docs:
   - changed-files:
