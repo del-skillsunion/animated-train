@@ -1,25 +1,60 @@
-name: CD - Frontend Deploy
+name: CD
 
 on:
   push:
     branches:
-      - "*"
       - dev
       - qa
   release:
     types: [published]
 
+# BEST PRACTICE 1: Concurrency
+# If a new commit is pushed to the same branch while a deploy is running, 
+# this ensures they queue up correctly rather than conflicting.
 concurrency:
-  group: deploy-${{ github.event_name == 'release' && 'prod' || github.ref_name }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+# BEST PRACTICE 2: Permissions (Least Privilege)
+# We strictly define what the token can do. 
+# 'id-token: write' is required for AWS OIDC.
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
-  deploy:
+  # ====================================================
+  # STEP A: CONFIGURATION (The "Brain")
+  # Determines environment variables and stage logic
+  # ====================================================
+  config:
     runs-on: ubuntu-latest
-    environment: ${{ github.event_name == 'release' && 'prod' || github.ref_name }}
+    outputs:
+      stage: ${{ steps.set_stage.outputs.stage }}
+    steps:
+      - name: Determine Stage
+        id: set_stage
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "Target Stage: prod"
+            echo "stage=prod" >> $GITHUB_OUTPUT
+          else
+            echo "Target Stage: ${{ github.ref_name }}"
+            echo "stage=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
 
-    # Global env for all steps
+  # ====================================================
+  # STEP B: DEPLOY INFRASTRUCTURE (The "Muscle")
+  # Handles heavy AWS/SST lifting. Fails fast if broken.
+  # ====================================================
+  deploy:
+    needs: config
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # Safety net for stuck deployments
+    environment: ${{ needs.config.outputs.stage }} # Loads correct secrets (dev vs prod)
+    
     env:
+      # We define these at the job level so they are available to all steps
       NEXT_MY_STAGE: ${{ secrets.NEXT_MY_STAGE }}
       NEXT_APP_BASE_URL: ${{ secrets.NEXT_APP_BASE_URL }}
       NEXT_APP_SOCKET: ${{ secrets.NEXT_APP_SOCKET }}
@@ -34,89 +69,103 @@ jobs:
       NEXT_FIREBASE_MEASUREMENT_ID: ${{ secrets.NEXT_FIREBASE_MEASUREMENT_ID }}
       NEXT_PUBLIC_POSTHOG_KEY: ${{ secrets.NEXT_PUBLIC_POSTHOG_KEY }}
       NEXT_PUBLIC_POSTHOG_HOST: ${{ secrets.NEXT_PUBLIC_POSTHOG_HOST }}
-
-      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
       SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
 
-    permissions:
-      contents: read
-      id-token: write
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v3
         with:
           node-version: 21.1.0
-          cache: yarn
-
-      - name: Enable Corepack (Yarn)
-        run: corepack enable
+          cache: 'yarn' # BEST PRACTICE 3: Caching (Speeds up install)
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
-
-      - name: Set Deployment Stage
-        id: stage_logic
         run: |
-          if [[ "${{ github.event_name }}" == "release" ]]; then
-            echo "SETTING STAGE TO: prod"
-            echo "stage=prod" >> "$GITHUB_OUTPUT"
-          else
-            echo "SETTING STAGE TO: ${{ github.ref_name }}"
-            echo "stage=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-          fi
+          npm install -g yarn
+          yarn install --frozen-lockfile
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v1-node16
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
           role-to-assume: arn:aws:iam::954976312446:role/deploy-access-frontend
           role-duration-seconds: 3600
-          role-session-name: frontend-deploy-${{ github.run_id }}
 
       - name: Deploy SST
         run: |
-          stage="${{ steps.stage_logic.outputs.stage }}"
-          echo "Deploying to stage: $stage"
-          yarn sst deploy --stage "$stage"
+          stage="${{ needs.config.outputs.stage }}"
+          echo "🚀 Deploying SST to: $stage"
+          export SENTRY_DSN="${{ secrets.SENTRY_DSN }}"
+          yarn sst deploy --stage $stage
 
-      - name: Create Sentry release (only prod)
-        if: ${{ steps.stage_logic.outputs.stage == 'prod' }}
+      - name: Create Sentry release
         uses: getsentry/action-release@v1
-        env:
-          SENTRY_AUTH_TOKEN: ${{ env.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: ${{ env.SENTRY_ORG }}
-          SENTRY_PROJECT: ${{ env.SENTRY_PROJECT }}
         with:
-          environment: ${{ steps.stage_logic.outputs.stage }}
+          environment: ${{ needs.config.outputs.stage }}
           version: ${{ github.sha }}
           ignore_missing: true
 
-      - name: Check sitemap URLs / build cache
-        run: |
-          stage="${{ steps.stage_logic.outputs.stage }}"
-          echo "Running sitemap/cache check for stage: $stage"
-          NEXT_MY_STAGE="$stage" node scripts/createCache.js
-
-      - name: Deploy Success
-        if: success()
+      - name: Notify Deploy Failure
         uses: rjstone/discord-webhook-notify@v1
-        with:
-          severity: info
-          details: "Deploy Succeeded for stage: ${{ steps.stage_logic.outputs.stage }}"
-          webhookUrl: ${{ secrets.DISCORD_WEBHOOK_URL }}
-
-      - name: Deploy Failure
         if: failure()
-        uses: rjstone/discord-webhook-notify@v1
         with:
           severity: error
-          details: "Deploy Failed for stage: ${{ steps.stage_logic.outputs.stage }}"
+          details: "🚨 Infrastructure Deploy Failed: ${{ needs.config.outputs.stage }}"
+          webhookUrl: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+  # ====================================================
+  # STEP C: VERIFY & CACHE (The "Verifier")
+  # Runs post-deploy scripts and final notification
+  # ====================================================
+  post_deploy:
+    needs: [config, deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ needs.config.outputs.stage }}
+    
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 21.1.0
+          cache: 'yarn'
+
+      - name: Install Scripts Dependencies
+        # Optimization: If createCache.js only needs basic libs, 
+        # you might not need the full heavy install here. 
+        # But for safety, we install everything cached.
+        run: |
+          npm install -g yarn
+          yarn install --frozen-lockfile
+
+      - name: Refresh Sitemap Cache
+        env:
+          NEXT_MY_STAGE: ${{ needs.config.outputs.stage }}
+          # Add other DB secrets here if the script needs them
+        run: |
+          stage="${{ needs.config.outputs.stage }}"
+          echo "🔄 Refilling cache for: $stage"
+          node scripts/createCache.js
+
+      - name: Notify Success
+        uses: rjstone/discord-webhook-notify@v1
+        if: success()
+        with:
+          severity: info
+          details: "✅ Full Deployment & Cache Update Complete: ${{ needs.config.outputs.stage }}"
+          webhookUrl: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+      - name: Notify Script Failure
+        uses: rjstone/discord-webhook-notify@v1
+        if: failure()
+        with:
+          severity: warning
+          details: "⚠️ App Deployed, but Sitemap Script Failed: ${{ needs.config.outputs.stage }}"
           webhookUrl: ${{ secrets.DISCORD_WEBHOOK_URL }}
