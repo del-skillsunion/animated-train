@@ -57,23 +57,6 @@ jobs:
           fi
 
   # ====================================================
-  # STEP A.1: TEST (Optional but Recommended)
-  # ====================================================
-  test:
-    needs: config
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
-        with:
-          node-version: 21.1.0
-          cache: 'yarn'
-      - run: | 
-          npm install -g yarn
-          yarn install --frozen-lockfile
-      # - run: yarn test  <-- Uncomment if you have tests
-
-  # ====================================================
   # STEP B: DEPLOY
   # This job uses the 'stage' decided in Step A
   # ====================================================
