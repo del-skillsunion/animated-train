@@ -26,6 +26,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       stage: ${{ steps.decision.outputs.stage }}
+    environment: 
+      name: ${{ github.event_name }}
     steps:
       - name: Map Trigger to Environment
         id: decision
