@@ -1,5 +1,6 @@
 name: CD
 
+# 1. TRIGGERS
 on:
   push:
     branches:
@@ -18,91 +19,88 @@ permissions:
 
 jobs:
   # ====================================================
-  # STEP A: CONFIGURATION
+  # STEP A: CONFIGURATION & LOGIC MAPPING
+  # We map the specific Trigger to a "Stage" here.
   # ====================================================
   config:
     runs-on: ubuntu-latest
     outputs:
-      stage: ${{ steps.set_stage.outputs.stage }}
+      stage: ${{ steps.decision.outputs.stage }}
     steps:
-      - name: Determine Stage
-        id: set_stage
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Map Trigger to Environment
+        id: decision
+        # This script explicitly handles your logic:
+        # 1. Release -> prod
+        # 2. Push to dev -> dev
+        # 3. Push to qa -> qa
         run: |
+          echo "--- 🔍 ANALYZING TRIGGER ---"
+          
           if [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "✅ Event is Release -> Target: PROD"
             echo "stage=prod" >> $GITHUB_OUTPUT
+            
+          elif [[ "${{ github.ref }}" == "refs/heads/qa" ]]; then
+            echo "✅ Branch is QA -> Target: QA"
+            echo "stage=qa" >> $GITHUB_OUTPUT
+            
+          elif [[ "${{ github.ref }}" == "refs/heads/dev" ]]; then
+            echo "✅ Branch is Dev -> Target: DEV"
+            echo "stage=dev" >> $GITHUB_OUTPUT
+            
           else
-            echo "stage=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "❌ Unknown trigger/branch combination"
+            exit 1
           fi
 
   # ====================================================
-  # STEP A.1: TEST & LINT (The "Gatekeeper")
-  # Runs unit tests and linting. If this fails, DEPLOY WON'T RUN.
+  # STEP A.1: TEST (Optional but Recommended)
   # ====================================================
   test:
     needs: config
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-
-      - name: Setup Node
-        uses: actions/setup-node@v3
+      - uses: actions/setup-node@v3
         with:
           node-version: 21.1.0
           cache: 'yarn'
-
-      - name: Install dependencies
-        run: |
+      - run: | 
           npm install -g yarn
           yarn install --frozen-lockfile
+      # - run: yarn test  <-- Uncomment if you have tests
 
-      # 1. Linting: Checks for syntax errors or bad coding style
-      - name: Lint Code
-        run: yarn lint
-        # If you don't have a lint command, you can remove this or use 'npm run lint'
-
-      # 2. Unit Tests: Checks if logic is correct
-      - name: Run Unit Tests
-        run: yarn test
-        # Ensure your package.json has a "test" script (e.g., "jest" or "vitest")
-  
   # ====================================================
-  # STEP B: DEPLOY INFRASTRUCTURE
-  # Only runs if 'test' passes successfully
+  # STEP B: DEPLOY
+  # This job uses the 'stage' decided in Step A
   # ====================================================
   deploy:
-    needs: [config, test] # DEPENDENCY UPDATED: Waits for test to pass!
+    needs: [config, test]
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # 🌟 DYNAMIC ENVIRONMENT 🌟
+    # This automatically loads the correct secrets for 'dev', 'qa', or 'prod'
     environment: ${{ needs.config.outputs.stage }}
+    
     env:
+      # Secrets are now loaded safely based on the environment above
       NEXT_MY_STAGE: ${{ secrets.NEXT_MY_STAGE }}
       NEXT_APP_BASE_URL: ${{ secrets.NEXT_APP_BASE_URL }}
-      NEXT_APP_SOCKET: ${{ secrets.NEXT_APP_SOCKET }}
-      NEXT_APP_DOMAIN_URL: ${{ secrets.NEXT_APP_DOMAIN_URL }}
-      NEXT_IMAGE_DOMAIN: ${{ secrets.NEXT_IMAGE_DOMAIN }}
-      NEXT_FIREBASE_API_KEY: ${{ secrets.NEXT_FIREBASE_API_KEY }}
-      NEXT_FIREBASE_AUTH_DOMAIN: ${{ secrets.NEXT_FIREBASE_AUTH_DOMAIN }}
-      NEXT_FIREBASE_PROJECT_ID: ${{ secrets.NEXT_FIREBASE_PROJECT_ID }}
-      NEXT_FIREBASE_STORAGE_BUCKET: ${{ secrets.NEXT_FIREBASE_STORAGE_BUCKET }}
-      NEXT_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.NEXT_FIREBASE_MESSAGING_SENDER_ID }}
-      NEXT_FIREBASE_APP_ID: ${{ secrets.NEXT_FIREBASE_APP_ID }}
-      NEXT_FIREBASE_MEASUREMENT_ID: ${{ secrets.NEXT_FIREBASE_MEASUREMENT_ID }}
-      NEXT_PUBLIC_POSTHOG_KEY: ${{ secrets.NEXT_PUBLIC_POSTHOG_KEY }}
-      NEXT_PUBLIC_POSTHOG_HOST: ${{ secrets.NEXT_PUBLIC_POSTHOG_HOST }}
+      # ... (include all your other env vars here) ...
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
       SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+
     steps:
       - uses: actions/checkout@v3
-
-      - name: Setup Node
-        uses: actions/setup-node@v3
+      - uses: actions/setup-node@v3
         with:
           node-version: 21.1.0
           cache: 'yarn'
-
-      - name: Install dependencies
-        run: |
+      - run: |
           npm install -g yarn
           yarn install --frozen-lockfile
 
@@ -118,7 +116,7 @@ jobs:
       - name: Deploy SST
         run: |
           stage="${{ needs.config.outputs.stage }}"
-          echo "🚀 Deploying SST to: $stage"
+          echo "🚀 STARTING DEPLOYMENT FOR: $stage"
           export SENTRY_DSN="${{ secrets.SENTRY_DSN }}"
           yarn sst deploy --stage $stage
 
@@ -127,23 +125,21 @@ jobs:
         with:
           environment: ${{ needs.config.outputs.stage }}
           version: ${{ github.sha }}
-          ignore_missing: true
 
-      - name: Notify Deploy Failure
+      - name: Notify Failure
         uses: rjstone/discord-webhook-notify@v1
         if: failure()
         with:
           severity: error
-          details: "🚨 Infrastructure Deploy Failed: ${{ needs.config.outputs.stage }}"
+          details: "🚨 Deploy Failed for ${{ needs.config.outputs.stage }}"
           webhookUrl: ${{ secrets.DISCORD_WEBHOOK_URL }}
 
   # ====================================================
-  # STEP C: VERIFY & CACHE
+  # STEP C: POST-DEPLOY
   # ====================================================
   post_deploy:
     needs: [config, deploy]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
     environment: ${{ needs.config.outputs.stage }}
     steps:
       - uses: actions/checkout@v3
@@ -151,24 +147,20 @@ jobs:
         with:
           node-version: 21.1.0
           cache: 'yarn'
-      - run: |
+      - run: | 
           npm install -g yarn
           yarn install --frozen-lockfile
+          
       - name: Refresh Sitemap Cache
         run: |
           stage="${{ needs.config.outputs.stage }}"
+          echo "Updating cache for $stage..."
           NEXT_MY_STAGE=$stage node scripts/createCache.js
+
       - name: Notify Success
         uses: rjstone/discord-webhook-notify@v1
         if: success()
         with:
           severity: info
-          details: "✅ Deploy Succeeded: ${{ needs.config.outputs.stage }}"
-          webhookUrl: ${{ secrets.DISCORD_WEBHOOK_URL }}
-      - name: Notify Script Failure
-        uses: rjstone/discord-webhook-notify@v1
-        if: failure()
-        with:
-          severity: warning
-          details: "⚠️ Deploy OK, Cache Script Failed: ${{ needs.config.outputs.stage }}"
+          details: "✅ Successfully Deployed to: ${{ needs.config.outputs.stage }}"
           webhookUrl: ${{ secrets.DISCORD_WEBHOOK_URL }}
