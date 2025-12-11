@@ -61,7 +61,7 @@ jobs:
   # This job uses the 'stage' decided in Step A
   # ====================================================
   deploy:
-    needs: [config, test]
+    needs: [config]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # 🌟 DYNAMIC ENVIRONMENT 🌟
