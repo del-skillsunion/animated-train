@@ -1,56 +1,122 @@
-name: CICD for Serverless Application
-run-name: ${{ github.actor }} is doing CICD for Serverless Application
+name: CD - Frontend Deploy
 
 on:
   push:
-    branches:  [ main, "*"]
+    branches:
+      - "*"
+      - dev
+      - qa
   release:
     types: [published]
 
+concurrency:
+  group: deploy-${{ github.event_name == 'release' && 'prod' || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
-  pre-deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "🎉 The job was automatically triggered by a ${{ github.event_name }} event"
-      - run: echo "🐧 This job is now running on a ${{ runner.os }} server hosted by GitHub!"
-      - run: echo "🔎 The name of your branch is ${{ github.ref }} and your repository is ${{ github.repository }}."
-
-  install-dependencies:
-    runs-on: ubuntu-latest
-    needs: pre-deploy
-    steps:
-      - name: Check out repository code
-        uses: actions/checkout@v3
-      - name: Run Installation of Dependencies Commands
-        run: npm install
-
-  scan-dependencies:
-    runs-on: ubuntu-latest
-    needs: install-dependencies
-    steps:
-      - name: Check out repository code
-        uses: actions/checkout@v3
-      - name: Run Scanning of Dependencies Commands
-        run: npm audit
-
   deploy:
-    name: deploy
     runs-on: ubuntu-latest
-    needs: install-dependencies
-    strategy:
-      matrix:
-        node-version: [18.x]
+    environment: ${{ github.event_name == 'release' && 'prod' || github.ref_name }}
+
+    # Global env for all steps
+    env:
+      NEXT_MY_STAGE: ${{ secrets.NEXT_MY_STAGE }}
+      NEXT_APP_BASE_URL: ${{ secrets.NEXT_APP_BASE_URL }}
+      NEXT_APP_SOCKET: ${{ secrets.NEXT_APP_SOCKET }}
+      NEXT_APP_DOMAIN_URL: ${{ secrets.NEXT_APP_DOMAIN_URL }}
+      NEXT_IMAGE_DOMAIN: ${{ secrets.NEXT_IMAGE_DOMAIN }}
+      NEXT_FIREBASE_API_KEY: ${{ secrets.NEXT_FIREBASE_API_KEY }}
+      NEXT_FIREBASE_AUTH_DOMAIN: ${{ secrets.NEXT_FIREBASE_AUTH_DOMAIN }}
+      NEXT_FIREBASE_PROJECT_ID: ${{ secrets.NEXT_FIREBASE_PROJECT_ID }}
+      NEXT_FIREBASE_STORAGE_BUCKET: ${{ secrets.NEXT_FIREBASE_STORAGE_BUCKET }}
+      NEXT_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.NEXT_FIREBASE_MESSAGING_SENDER_ID }}
+      NEXT_FIREBASE_APP_ID: ${{ secrets.NEXT_FIREBASE_APP_ID }}
+      NEXT_FIREBASE_MEASUREMENT_ID: ${{ secrets.NEXT_FIREBASE_MEASUREMENT_ID }}
+      NEXT_PUBLIC_POSTHOG_KEY: ${{ secrets.NEXT_PUBLIC_POSTHOG_KEY }}
+      NEXT_PUBLIC_POSTHOG_HOST: ${{ secrets.NEXT_PUBLIC_POSTHOG_HOST }}
+
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+      SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+
+    permissions:
+      contents: read
+      id-token: write
+
     steps:
-    - uses: actions/checkout@v3
-    - name: Use Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v3
-      with:
-        node-version: ${{ matrix.node-version }}
-    - run: npm ci
-    - name: serverless deploy
-      uses: serverless/github-action@v3.2
-      with:
-        args: deploy
-      env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 21.1.0
+          cache: yarn
+
+      - name: Enable Corepack (Yarn)
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Set Deployment Stage
+        id: stage_logic
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "SETTING STAGE TO: prod"
+            echo "stage=prod" >> "$GITHUB_OUTPUT"
+          else
+            echo "SETTING STAGE TO: ${{ github.ref_name }}"
+            echo "stage=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+          role-to-assume: arn:aws:iam::954976312446:role/deploy-access-frontend
+          role-duration-seconds: 3600
+          role-session-name: frontend-deploy-${{ github.run_id }}
+
+      - name: Deploy SST
+        run: |
+          stage="${{ steps.stage_logic.outputs.stage }}"
+          echo "Deploying to stage: $stage"
+          yarn sst deploy --stage "$stage"
+
+      - name: Create Sentry release (only prod)
+        if: ${{ steps.stage_logic.outputs.stage == 'prod' }}
+        uses: getsentry/action-release@v1
+        env:
+          SENTRY_AUTH_TOKEN: ${{ env.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ env.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ env.SENTRY_PROJECT }}
+        with:
+          environment: ${{ steps.stage_logic.outputs.stage }}
+          version: ${{ github.sha }}
+          ignore_missing: true
+
+      - name: Check sitemap URLs / build cache
+        run: |
+          stage="${{ steps.stage_logic.outputs.stage }}"
+          echo "Running sitemap/cache check for stage: $stage"
+          NEXT_MY_STAGE="$stage" node scripts/createCache.js
+
+      - name: Deploy Success
+        if: success()
+        uses: rjstone/discord-webhook-notify@v1
+        with:
+          severity: info
+          details: "Deploy Succeeded for stage: ${{ steps.stage_logic.outputs.stage }}"
+          webhookUrl: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+      - name: Deploy Failure
+        if: failure()
+        uses: rjstone/discord-webhook-notify@v1
+        with:
+          severity: error
+          details: "Deploy Failed for stage: ${{ steps.stage_logic.outputs.stage }}"
+          webhookUrl: ${{ secrets.DISCORD_WEBHOOK_URL }}
