@@ -1,6 +1,5 @@
 name: CD
 
-# 1. TRIGGERS
 on:
   push:
     branches:
@@ -18,61 +17,59 @@ permissions:
   id-token: write
 
 jobs:
-  # ====================================================
-  # STEP A: CONFIGURATION & LOGIC MAPPING
-  # We map the specific Trigger to a "Stage" here.
-  # ====================================================
+  # ------------------------------------------------------------------
+  # STEP A: CONFIG
+  # Decides the environment so the next step knows what to display
+  # ------------------------------------------------------------------
   config:
+    name: ⚙️ Config
     runs-on: ubuntu-latest
     outputs:
       stage: ${{ steps.decision.outputs.stage }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-
       - name: Map Trigger to Environment
         id: decision
-        # This script explicitly handles your logic:
-        # 1. Release -> prod
-        # 2. Push to dev -> dev
-        # 3. Push to qa -> qa
         run: |
-          echo "--- 🔍 ANALYZING TRIGGER ---"
-          
           if [[ "${{ github.event_name }}" == "release" ]]; then
-            echo "✅ Event is Release -> Target: PROD"
             echo "stage=prod" >> $GITHUB_OUTPUT
-            
           elif [[ "${{ github.ref }}" == "refs/heads/qa" ]]; then
-            echo "✅ Branch is QA -> Target: QA"
             echo "stage=qa" >> $GITHUB_OUTPUT
-            
-          elif [[ "${{ github.ref }}" == "refs/heads/dev" ]]; then
-            echo "✅ Branch is Dev -> Target: DEV"
-            echo "stage=dev" >> $GITHUB_OUTPUT
-            
           else
-            echo "❌ Unknown trigger/branch combination"
-            exit 1
+            echo "stage=dev" >> $GITHUB_OUTPUT
           fi
 
-  # ====================================================
+  # ------------------------------------------------------------------
   # STEP B: DEPLOY
-  # This job uses the 'stage' decided in Step A
-  # ====================================================
+  # This setup forces the UI to look like your screenshot
+  # ------------------------------------------------------------------
   deploy:
-    needs: [config]
+    name: Deploy  # <--- This sets the BOLD text in the box
+    needs: config
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # 🌟 DYNAMIC ENVIRONMENT 🌟
-    # This automatically loads the correct secrets for 'dev', 'qa', or 'prod'
-    environment: ${{ needs.config.outputs.stage }}
     
+    # This block creates the "Deploying to <stage>" subtitle in the UI
+    environment: 
+      name: ${{ needs.config.outputs.stage }}
+      # Optional: Add url if you want a "View Deployment" button
+      # url: https://${{ needs.config.outputs.stage }}.myapp.com 
+
     env:
-      # Secrets are now loaded safely based on the environment above
+      # Secrets loaded based on the dynamic environment above
       NEXT_MY_STAGE: ${{ secrets.NEXT_MY_STAGE }}
       NEXT_APP_BASE_URL: ${{ secrets.NEXT_APP_BASE_URL }}
-      # ... (include all your other env vars here) ...
+      NEXT_APP_SOCKET: ${{ secrets.NEXT_APP_SOCKET }}
+      NEXT_APP_DOMAIN_URL: ${{ secrets.NEXT_APP_DOMAIN_URL }}
+      NEXT_IMAGE_DOMAIN: ${{ secrets.NEXT_IMAGE_DOMAIN }}
+      NEXT_FIREBASE_API_KEY: ${{ secrets.NEXT_FIREBASE_API_KEY }}
+      NEXT_FIREBASE_AUTH_DOMAIN: ${{ secrets.NEXT_FIREBASE_AUTH_DOMAIN }}
+      NEXT_FIREBASE_PROJECT_ID: ${{ secrets.NEXT_FIREBASE_PROJECT_ID }}
+      NEXT_FIREBASE_STORAGE_BUCKET: ${{ secrets.NEXT_FIREBASE_STORAGE_BUCKET }}
+      NEXT_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.NEXT_FIREBASE_MESSAGING_SENDER_ID }}
+      NEXT_FIREBASE_APP_ID: ${{ secrets.NEXT_FIREBASE_APP_ID }}
+      NEXT_FIREBASE_MEASUREMENT_ID: ${{ secrets.NEXT_FIREBASE_MEASUREMENT_ID }}
+      NEXT_PUBLIC_POSTHOG_KEY: ${{ secrets.NEXT_PUBLIC_POSTHOG_KEY }}
+      NEXT_PUBLIC_POSTHOG_HOST: ${{ secrets.NEXT_PUBLIC_POSTHOG_HOST }}
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
       SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
@@ -99,11 +96,11 @@ jobs:
       - name: Deploy SST
         run: |
           stage="${{ needs.config.outputs.stage }}"
-          echo "🚀 STARTING DEPLOYMENT FOR: $stage"
+          echo "🚀 Deploying to: $stage"
           export SENTRY_DSN="${{ secrets.SENTRY_DSN }}"
           yarn sst deploy --stage $stage
 
-      - name: Create Sentry release
+      - name: Create Sentry Release
         uses: getsentry/action-release@v1
         with:
           environment: ${{ needs.config.outputs.stage }}
@@ -114,13 +111,14 @@ jobs:
         if: failure()
         with:
           severity: error
-          details: "🚨 Deploy Failed for ${{ needs.config.outputs.stage }}"
+          details: "🚨 Deploy Failed: ${{ needs.config.outputs.stage }}"
           webhookUrl: ${{ secrets.DISCORD_WEBHOOK_URL }}
 
-  # ====================================================
+  # ------------------------------------------------------------------
   # STEP C: POST-DEPLOY
-  # ====================================================
+  # ------------------------------------------------------------------
   post_deploy:
+    name: Post-Deploy Verification
     needs: [config, deploy]
     runs-on: ubuntu-latest
     environment: ${{ needs.config.outputs.stage }}
@@ -130,14 +128,13 @@ jobs:
         with:
           node-version: 21.1.0
           cache: 'yarn'
-      - run: | 
+      - run: |
           npm install -g yarn
           yarn install --frozen-lockfile
           
       - name: Refresh Sitemap Cache
         run: |
           stage="${{ needs.config.outputs.stage }}"
-          echo "Updating cache for $stage..."
           NEXT_MY_STAGE=$stage node scripts/createCache.js
 
       - name: Notify Success
@@ -145,5 +142,5 @@ jobs:
         if: success()
         with:
           severity: info
-          details: "✅ Successfully Deployed to: ${{ needs.config.outputs.stage }}"
+          details: "✅ Deploy Succeeded: ${{ needs.config.outputs.stage }}"
           webhookUrl: ${{ secrets.DISCORD_WEBHOOK_URL }}
