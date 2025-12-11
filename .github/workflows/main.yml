@@ -8,24 +8,17 @@ on:
   release:
     types: [published]
 
-# BEST PRACTICE 1: Concurrency
-# If a new commit is pushed to the same branch while a deploy is running, 
-# this ensures they queue up correctly rather than conflicting.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
-# BEST PRACTICE 2: Permissions (Least Privilege)
-# We strictly define what the token can do. 
-# 'id-token: write' is required for AWS OIDC.
 permissions:
   contents: read
   id-token: write
 
 jobs:
   # ====================================================
-  # STEP A: CONFIGURATION (The "Brain")
-  # Determines environment variables and stage logic
+  # STEP A: CONFIGURATION
   # ====================================================
   config:
     runs-on: ubuntu-latest
@@ -36,25 +29,52 @@ jobs:
         id: set_stage
         run: |
           if [[ "${{ github.event_name }}" == "release" ]]; then
-            echo "Target Stage: prod"
             echo "stage=prod" >> $GITHUB_OUTPUT
           else
-            echo "Target Stage: ${{ github.ref_name }}"
             echo "stage=${{ github.ref_name }}" >> $GITHUB_OUTPUT
           fi
 
   # ====================================================
-  # STEP B: DEPLOY INFRASTRUCTURE (The "Muscle")
-  # Handles heavy AWS/SST lifting. Fails fast if broken.
+  # STEP A.1: TEST & LINT (The "Gatekeeper")
+  # Runs unit tests and linting. If this fails, DEPLOY WON'T RUN.
   # ====================================================
-  deploy:
+  test:
     needs: config
     runs-on: ubuntu-latest
-    timeout-minutes: 30 # Safety net for stuck deployments
-    environment: ${{ needs.config.outputs.stage }} # Loads correct secrets (dev vs prod)
-    
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 21.1.0
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: |
+          npm install -g yarn
+          yarn install --frozen-lockfile
+
+      # 1. Linting: Checks for syntax errors or bad coding style
+      - name: Lint Code
+        run: yarn lint
+        # If you don't have a lint command, you can remove this or use 'npm run lint'
+
+      # 2. Unit Tests: Checks if logic is correct
+      - name: Run Unit Tests
+        run: yarn test
+        # Ensure your package.json has a "test" script (e.g., "jest" or "vitest")
+  
+  # ====================================================
+  # STEP B: DEPLOY INFRASTRUCTURE
+  # Only runs if 'test' passes successfully
+  # ====================================================
+  deploy:
+    needs: [config, test] # DEPENDENCY UPDATED: Waits for test to pass!
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ needs.config.outputs.stage }}
     env:
-      # We define these at the job level so they are available to all steps
       NEXT_MY_STAGE: ${{ secrets.NEXT_MY_STAGE }}
       NEXT_APP_BASE_URL: ${{ secrets.NEXT_APP_BASE_URL }}
       NEXT_APP_SOCKET: ${{ secrets.NEXT_APP_SOCKET }}
@@ -72,7 +92,6 @@ jobs:
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
       SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
-
     steps:
       - uses: actions/checkout@v3
 
@@ -80,7 +99,7 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: 21.1.0
-          cache: 'yarn' # BEST PRACTICE 3: Caching (Speeds up install)
+          cache: 'yarn'
 
       - name: Install dependencies
         run: |
@@ -119,8 +138,7 @@ jobs:
           webhookUrl: ${{ secrets.DISCORD_WEBHOOK_URL }}
 
   # ====================================================
-  # STEP C: VERIFY & CACHE (The "Verifier")
-  # Runs post-deploy scripts and final notification
+  # STEP C: VERIFY & CACHE
   # ====================================================
   post_deploy:
     needs: [config, deploy]
@@ -129,42 +147,28 @@ jobs:
     environment: ${{ needs.config.outputs.stage }}
     steps:
       - uses: actions/checkout@v3
-
-      - name: Setup Node
-        uses: actions/setup-node@v3
+      - uses: actions/setup-node@v3
         with:
           node-version: 21.1.0
           cache: 'yarn'
-
-      - name: Install Scripts Dependencies
-        # Optimization: If createCache.js only needs basic libs, 
-        # you might not need the full heavy install here. 
-        # But for safety, we install everything cached.
-        run: |
+      - run: |
           npm install -g yarn
           yarn install --frozen-lockfile
-
       - name: Refresh Sitemap Cache
-        env:
-          NEXT_MY_STAGE: ${{ needs.config.outputs.stage }}
-          # Add other DB secrets here if the script needs them
         run: |
           stage="${{ needs.config.outputs.stage }}"
-          echo "🔄 Refilling cache for: $stage"
-          node scripts/createCache.js
-
+          NEXT_MY_STAGE=$stage node scripts/createCache.js
       - name: Notify Success
         uses: rjstone/discord-webhook-notify@v1
         if: success()
         with:
           severity: info
-          details: "✅ Full Deployment & Cache Update Complete: ${{ needs.config.outputs.stage }}"
+          details: "✅ Deploy Succeeded: ${{ needs.config.outputs.stage }}"
           webhookUrl: ${{ secrets.DISCORD_WEBHOOK_URL }}
-
       - name: Notify Script Failure
         uses: rjstone/discord-webhook-notify@v1
         if: failure()
         with:
           severity: warning
-          details: "⚠️ App Deployed, but Sitemap Script Failed: ${{ needs.config.outputs.stage }}"
+          details: "⚠️ Deploy OK, Cache Script Failed: ${{ needs.config.outputs.stage }}"
           webhookUrl: ${{ secrets.DISCORD_WEBHOOK_URL }}
